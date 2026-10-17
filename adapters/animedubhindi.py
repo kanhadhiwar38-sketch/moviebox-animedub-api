@@ -8,7 +8,10 @@ logger = logging.getLogger(__name__)
 
 class AnimeDubHindiAdapter:
     def __init__(self):
-        self.main_url = "https://www.animedubhindi.cc"
+        self.domains = [
+            "https://www.animedubhindi.cc",
+            "https://www.animedubhindi.link"
+        ]
 
     async def search(self, query: str) -> List[Dict[str, Any]]:
         queries = [query]
@@ -20,40 +23,54 @@ class AnimeDubHindiAdapter:
         if len(words) > 1 and " ".join(words[:2]) != words[0]:
             queries.append(words[0])
 
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Referer": "https://www.google.com/"
+        }
+
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            for q in queries:
-                search_url = f"{self.main_url}/?s={q}"
-                try:
-                    resp = await client.get(search_url, headers={"User-Agent": "Mozilla/5.0"})
-                    if resp.status_code == 200:
-                        soup = BeautifulSoup(resp.text, "html.parser")
-                        results = []
-                        for article in soup.select("article"):
-                            a_tag = article.select_one("h2 a")
-                            if not a_tag:
-                                continue
-                            title = a_tag.get_text(strip=True)
-                            href = a_tag.get("href")
-                            if not href:
-                                continue
-                            img = article.select_one("img")
-                            poster = img.get("src") if img else None
-                            results.append({
-                                "title": title,
-                                "url": href,
-                                "poster": poster,
-                                "type": "anime"
-                            })
-                        if results:
-                            return results
-                except Exception as e:
-                    logger.error(f"AnimeDubHindi search error for '{q}': {e}")
+            for base_url in self.domains:
+                for q in queries:
+                    search_url = f"{base_url}/?s={q}"
+                    try:
+                        resp = await client.get(search_url, headers=headers)
+                        if resp.status_code == 200:
+                            soup = BeautifulSoup(resp.text, "html.parser")
+                            results = []
+                            for article in soup.select("article"):
+                                a_tag = article.select_one("h2 a")
+                                if not a_tag:
+                                    continue
+                                title = a_tag.get_text(strip=True)
+                                href = a_tag.get("href")
+                                if not href:
+                                    continue
+                                img = article.select_one("img")
+                                poster = img.get("src") if img else None
+                                results.append({
+                                    "title": title,
+                                    "url": href,
+                                    "poster": poster,
+                                    "type": "anime"
+                                })
+                            if results:
+                                return results
+                    except Exception as e:
+                        logger.error(f"AnimeDubHindi search error on {base_url} for '{q}': {e}")
         return []
 
     async def get_links(self, post_url: str, season: int = 1, episode: int = 1) -> List[Dict[str, Any]]:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Referer": "https://www.animedubhindi.cc/"
+        }
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             try:
-                resp = await client.get(post_url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = await client.get(post_url, headers=headers)
                 if resp.status_code != 200:
                     return []
 
@@ -61,17 +78,13 @@ class AnimeDubHindiAdapter:
                 iframe_a = soup.select_one("div.wp-block-button a")
                 if not iframe_a:
                     iframe_a = soup.select_one("iframe") or soup.select_one(".entry-content a")
-                if not iframe_a:
-                    return []
 
-                iframe_url = iframe_a.get("href") or iframe_a.get("src")
-                if not iframe_url:
-                    return []
+                iframe_url = iframe_a.get("href") or iframe_a.get("src") if iframe_a else None
 
                 sources = []
-                if iframe_url.startswith("http"):
+                if iframe_url and iframe_url.startswith("http"):
                     try:
-                        i_resp = await client.get(iframe_url, headers={"User-Agent": "Mozilla/5.0"})
+                        i_resp = await client.get(iframe_url, headers=headers)
                         if i_resp.status_code == 200:
                             i_soup = BeautifulSoup(i_resp.text, "html.parser")
                             for a in i_soup.select("a"):

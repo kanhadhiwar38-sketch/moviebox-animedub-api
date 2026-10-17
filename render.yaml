@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: moviebox-animedub-api
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: TMDB_API_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO

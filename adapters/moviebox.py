@@ -70,47 +70,58 @@ class MovieBoxAdapter:
             pass
 
     async def search(self, query: str) -> List[Dict[str, Any]]:
-        url = f"{self.main_url}/wefeed-mobile-bff/subject-api/search/v2"
-        json_body = {"page": 1, "perPage": 20, "keyword": query}
-        import json
-        body_str = json.dumps(json_body)
-
-        x_client_token = generate_x_client_token()
-        x_tr_signature = generate_x_tr_signature("POST", "application/json", "application/json; charset=utf-8", url, body_str)
-        token = await self._get_cached_token()
-        brand, model = random_brand_model()
-
-        headers = {
-            "user-agent": "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)",
-            "accept": "application/json",
-            "content-type": "application/json",
-            "x-client-token": x_client_token,
-            "x-tr-signature": x_tr_signature,
-            "x-client-info": f'{{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"{self.device_id}","install_store":"ps","gaid":"d7578036d13336cc","brand":"{brand}","model":"{model}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}}',
-            "x-client-status": "0",
-            "Authorization": f"Bearer {token}"
-        }
+        # Try full query first, then fallback to first 2 words if no results
+        queries = [query]
+        words = query.split()
+        if len(words) > 2:
+            queries.append(" ".join(words[:2]))
+        if len(words) > 1 and " ".join(words[:2]) != words[0]:
+            queries.append(words[0])
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                resp = await client.post(url, headers=headers, content=body_str)
-                self._persist_token_from_header(resp.headers.get("x-user"))
-                if resp.status_code == 200:
-                    data = resp.json()
-                    results = data.get("data", {}).get("results", [])
-                    matched = []
-                    for res in results:
-                        for subject in res.get("subjects", []):
-                            matched.append({
-                                "id": subject.get("subjectId"),
-                                "title": subject.get("title"),
-                                "poster": subject.get("cover", {}).get("url"),
-                                "type": "movie" if subject.get("subjectType", 1) == 1 else "tv",
-                                "rating": subject.get("imdbRatingValue")
-                            })
-                    return matched
-            except Exception as e:
-                logger.error(f"MovieBox search error: {e}")
+            for q in queries:
+                url = f"{self.main_url}/wefeed-mobile-bff/subject-api/search/v2"
+                json_body = {"page": 1, "perPage": 20, "keyword": q}
+                import json
+                body_str = json.dumps(json_body)
+
+                x_client_token = generate_x_client_token()
+                x_tr_signature = generate_x_tr_signature("POST", "application/json", "application/json; charset=utf-8", url, body_str)
+                token = await self._get_cached_token()
+                brand, model = random_brand_model()
+
+                headers = {
+                    "user-agent": "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)",
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                    "x-client-token": x_client_token,
+                    "x-tr-signature": x_tr_signature,
+                    "x-client-info": f'{{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"{self.device_id}","install_store":"ps","gaid":"d7578036d13336cc","brand":"{brand}","model":"{model}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}}',
+                    "x-client-status": "0"
+                }
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+
+                try:
+                    resp = await client.post(url, headers=headers, content=body_str)
+                    self._persist_token_from_header(resp.headers.get("x-user"))
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        results = data.get("data", {}).get("results", [])
+                        matched = []
+                        for res in results:
+                            for subject in res.get("subjects", []):
+                                matched.append({
+                                    "id": subject.get("subjectId"),
+                                    "title": subject.get("title"),
+                                    "poster": subject.get("cover", {}).get("url"),
+                                    "type": "movie" if subject.get("subjectType", 1) == 1 else "tv",
+                                    "rating": subject.get("imdbRatingValue")
+                                })
+                        if matched:
+                            return matched
+                except Exception as e:
+                    logger.error(f"MovieBox search error for query '{q}': {e}")
         return []
 
     async def get_links(self, subject_id: str, season: int = 0, episode: int = 0) -> List[Dict[str, Any]]:
@@ -122,7 +133,6 @@ class MovieBoxAdapter:
         x_ct = generate_x_client_token()
         x_sig = generate_x_tr_signature("GET", "application/json", "application/json", subject_url)
         headers = {
-            "Authorization": f"Bearer {token}",
             "user-agent": f"com.community.oneroom/50020088 (Linux; U; Android 13; en_US; {brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
             "accept": "application/json",
             "content-type": "application/json",
@@ -130,13 +140,15 @@ class MovieBoxAdapter:
             "x-tr-signature": x_sig,
             "x-client-status": "0"
         }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
         subject_ids_to_check = [(subject_id, "Original")]
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 resp = await client.get(subject_url, headers=headers)
                 self._persist_token_from_header(resp.headers.get("x-user"))
-                if resp.status_code == 200.0 or resp.status_code == 200:
+                if resp.status_code == 200:
                     data = resp.json().get("data", {})
                     for dub in data.get("dubs", []):
                         sid = dub.get("subjectId")
@@ -153,7 +165,6 @@ class MovieBoxAdapter:
                 pct = generate_x_client_token()
                 psig = generate_x_tr_signature("GET", "application/json", "application/json", play_url)
                 p_headers = {
-                    "Authorization": f"Bearer {token}",
                     "user-agent": headers["user-agent"],
                     "accept": "application/json",
                     "content-type": "application/json",
@@ -161,6 +172,9 @@ class MovieBoxAdapter:
                     "x-tr-signature": psig,
                     "x-client-status": "0"
                 }
+                if token:
+                    p_headers["Authorization"] = f"Bearer {token}"
+
                 try:
                     presp = await client.get(play_url, headers=p_headers)
                     if presp.status_code == 200:
